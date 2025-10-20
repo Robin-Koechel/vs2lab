@@ -114,6 +114,20 @@ class ChordNode:
             return self.finger_table[-1]  # key in [FT[-1],FT[0]]
         assert False # we cannot be here
 
+    def closest_preceding_node(self, key) -> int:
+        """
+        Find the closest preceding node to 'key' from the finger table.
+        Returns the node id that most closely precedes the key (or self.node_id if unknown).
+        """
+        # scan finger table from largest to smallest
+        for i in range(self.n_bits, 0, -1):
+            fid = self.finger_table[i]
+            if fid == -1:
+                continue
+            if self.in_between(fid, self.node_id + 1, key):
+                return fid
+        return self.node_id
+
     def enter(self):
         self.channel.bind(str(self.node_id))  # bind current pid
         self.add_node(self.node_id)
@@ -150,13 +164,39 @@ class ChordNode:
                 self.logger.info("Node {:04n} received LOOKUP {:04n} from {:04n}."
                                  .format(self.node_id, int(request[1]), int(sender)))
 
-                # look up and return local successor 
-                next_id: int = self.local_successor_node(request[1])
-                self.channel.send_to([sender], (constChord.LOOKUP_REP, next_id))
+                # support an optional origin field so we can forward replies back
+                # message formats supported:
+                # (LOOKUP_REQ, key) -> original sender expects reply directly
+                # (LOOKUP_REQ, key, origin) -> origin is the original requester id
+                if len(request) > 2:
+                    key = request[1]
+                    origin = request[2]
+                else:
+                    key = request[1]
+                    origin = sender
+
+                # If we are responsible for the key, reply to origin
+                next_id: int = self.local_successor_node(key)
+                if next_id == self.node_id:
+                    # we are the successor
+                    self.channel.send_to([origin], (constChord.LOOKUP_REP, next_id))
+                else:
+                    # forward lookup to the best known node (recursive lookup)
+                    best = self.closest_preceding_node(key)
+                    if best == self.node_id or best == -1:
+                        # fall back to direct successor if we couldn't find a closer node
+                        best = next_id
+                    # include the original origin so the final reply can be routed back
+                    self.channel.send_to([str(best)], (constChord.LOOKUP_REQ, key, origin))
 
                 # Finally do a sanity check
-                if not self.channel.exists(next_id):  # probe for existence
-                    self.delete_node(next_id)  # purge disappeared node
+                if not self.channel.exists(str(next_id)):
+                    # probe for existence; purge disappeared node (ensure string id)
+                    try:
+                        self.delete_node(int(next_id))  # purge disappeared node
+                    except Exception:
+                        # ignore if next_id not in list or conversion fails
+                        pass
 
             elif request[0] == constChord.JOIN:
                 # Join request (the node was already registered above)
@@ -164,6 +204,17 @@ class ChordNode:
                                   .format(self.node_id, int(sender)))
                 # we don't care for storage re-location in this example
                 continue
+            elif request[0] == constChord.LOOKUP_REP:
+                # A lookup reply - either forward to origin or consume if we are the origin
+                # format: (LOOKUP_REP, successor_id)
+                self.logger.info("Node {:04n} received LOOKUP_REP {} from {:04n}.")
+                try:
+                    self.logger.info("Node {:04n} received LOOKUP_REP {:04n} from {:04n}.".format(self.node_id, int(request[1]), int(sender)))
+                except Exception:
+                    # ignore formatting errors
+                    pass
+                # Normally replies are sent directly to the origin, so there's nothing to do here.
+                # If additional routing logic is required, it can be implemented.
             elif request[0] == constChord.LEAVE:  # Leave request
                 self.logger.info("Node {:04n} received LEAVE from {:04n}."
                                  .format(self.node_id, int(sender)))

@@ -10,6 +10,7 @@ Chord Application
 import logging
 import sys
 import multiprocessing as mp
+import random
 
 import chordnode as chord_node
 import constChord
@@ -29,8 +30,28 @@ class DummyChordClient:
         self.channel.bind(self.node_id)
 
     def run(self):
-        print("Implement me pls...")
-        self.channel.send_to(  # a final multicast
+        # pick a random valid key and a random existing chord node to query
+        nodes = {node.decode() for node in list(self.channel.channel.smembers('node'))}
+        if not nodes:
+            print("No chord nodes available for lookup.")
+        else:
+            target = random.choice(list(nodes))
+            key = random.randrange(self.channel.MAXPROC)
+            print(f"Client {self.node_id} sending LOOKUP for key {key:04n} to node {int(target):04n}")
+            # send lookup request including origin so replies are routed back
+            self.channel.send_to({target}, (constChord.LOOKUP_REQ, key, self.node_id))
+
+            # wait for reply
+            msg = self.channel.receive_from_any()
+            if msg is not None:
+                sender, request = msg
+                if request[0] == constChord.LOOKUP_REP:
+                    print(f"Client {self.node_id} received successor {int(request[1]):04n} for key {key:04n} from {int(sender):04n}")
+                else:
+                    print(f"Client {self.node_id} received unexpected message: {request} from {sender}")
+
+        # a final multicast STOP to shut down nodes
+        self.channel.send_to(
             {i.decode() for i in list(self.channel.channel.smembers('node'))},
             constChord.STOP)
 
@@ -48,6 +69,7 @@ def create_and_run(num_bits, node_class, enter_bar, run_bar):
     enter_bar.wait()  # wait for all nodes to join the channel
     node.enter()  # do what is needed to enter the ring
     run_bar.wait()  # wait for all nodes to finish entering
+    node.run()  # start operating the node
     node.run()  # start operating the node
 
 
