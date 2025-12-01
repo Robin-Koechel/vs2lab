@@ -1,5 +1,6 @@
 import rpc
 import logging
+import time
 
 from context import lab_logging
 
@@ -9,8 +10,10 @@ cl = rpc.Client()
 cl.run()
 
 base_list = rpc.DBList({'foo'})
-result_list = cl.append('bar', base_list)
+result_list = cl.runner(cl.append, lambda result: print("result: {}".format(result.value)), data='baz', db_list=base_list)
 
-print("Result: {}".format(result_list.value))
+for i in range(15):
+    time.sleep(1)
+    print('working...')
 
 cl.stop()
