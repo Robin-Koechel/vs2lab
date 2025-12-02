@@ -1,0 +1,12 @@
+
+1. open 6 Terminal and `cd lab3/wordcount`
+2. RUN 2 reducers
+    - pipenv run python reducer.py --bind tcp://127.0.0.1:6001
+    - pipenv run python reducer.py --bind tcp://127.0.0.1:6002
+3. RUN 3 mappers
+    - pipenv run python mapper.py --splitter tcp://127.0.0.1:7000 --reducers tcp://127.0.0.1:6001 tcp://127.0.0.1:6002
+    - pipenv run python mapper.py --splitter tcp://127.0.0.1:7000 --reducers tcp://127.0.0.1:6001 tcp://127.0.0.1:6002
+    - pipenv run python mapper.py --splitter tcp://127.0.0.1:7000 --reducers tcp://127.0.0.1:6001 tcp://127.0.0.1:6002
+
+4. RUN 1 splitter
+    - pipenv run python splitter.py --bind tcp://127.0.0.1:7000 --file text.txt
