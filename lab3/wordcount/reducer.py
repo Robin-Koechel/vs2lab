@@ -3,7 +3,7 @@ import zmq
 import argparse
 from typing import Dict
 
-# 1 python lab3/wordcount/reducer.py --bind tcp://127.0.0.1:6001
+#   python lab3/wordcount/reducer.py --bind tcp://127.0.0.1:6001
 #   python lab3/wordcount/reducer.py --bind tcp://127.0.0.1:6002
 class Reducer:
 	"""Reducer receives words on a PULL socket and maintains word counts.

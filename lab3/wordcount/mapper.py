@@ -32,16 +32,12 @@ class Mapper:
         self._build_char_map()
 
     def _build_char_map(self) -> None:
-        """Build a mapping from a-z characters to reducer indices.
-
-        The 26 letters are divided into len(reducers) contiguous buckets.
-        """
-        letters = string.ascii_lowercase
+        letters = string.ascii_lowercase + string.digits + string.punctuation
         n = len(self.reducers)
         self.char_to_reducer = {}
         for i, ch in enumerate(letters):
             # integer division to map 0..25 into 0..n-1
-            idx = (i * n) // 26
+            idx = (i * n) // len(letters)
             if idx >= n:
                 idx = n - 1
             self.char_to_reducer[ch] = idx
