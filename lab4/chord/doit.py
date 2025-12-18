@@ -8,6 +8,7 @@ Chord Application
 """
 
 import logging
+import random
 import sys
 import multiprocessing as mp
 
@@ -29,10 +30,28 @@ class DummyChordClient:
         self.channel.bind(self.node_id)
 
     def run(self):
-        print("Implement me pls...")
-        self.channel.send_to(  # a final multicast
-            {i.decode() for i in list(self.channel.channel.smembers('node'))},
-            constChord.STOP)
+        # create nodes
+        nodes = [int(n.decode()) for n in self.channel.channel.smembers('node')]
+
+        # pick random node for start
+        target_node = random.choice(nodes)
+
+        # pick random key to search for
+        key = random.randint(0, self.channel.MAXPROC - 1)
+
+        print(f"Client requests LOOKUP({key}) at node {target_node:04n}")
+
+        # send request
+        self.channel.send_to(
+            [str(target_node)],
+            (constChord.LOOKUP_REQ, key, target_node)
+        )
+
+        # stop nodes
+        self.channel.send_to(
+            {n.decode() for n in self.channel.channel.smembers('node')},
+            constChord.STOP
+        )
 
 
 def create_and_run(num_bits, node_class, enter_bar, run_bar):

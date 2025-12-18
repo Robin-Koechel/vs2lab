@@ -130,6 +130,15 @@ class ChordNode:
         self.recompute_finger_table()  # initialize local finger table
 
         self.logger.info("ChordNode {:04n} ready.".format(self.node_id))
+    
+    def get_closest(self, key):
+        for i in range(self.n_bits, 0, -1):
+            id = self.finger_table[i] 
+            if id == -1:
+                continue
+            if self.in_between(id, self.node_id + 1, key):
+                return id
+        return self.node_id
 
     def run(self):
         while True:  # Start node operation loop
@@ -146,17 +155,34 @@ class ChordNode:
                                   .format(self.node_id, int(sender)))
                 break
 
-            if request[0] == constChord.LOOKUP_REQ:  # A lookup request
+            if request[0] == constChord.LOOKUP_REQ:
+                # thw key to search for
+                key = request[1]
+        
+                # the node or client that started the lookup
+                origin = request[2]
+
                 self.logger.info("Node {:04n} received LOOKUP {:04n} from {:04n}."
-                                 .format(self.node_id, int(request[1]), int(sender)))
+                                .format(self.node_id, key, int(origin)))
+                
+                # get successor node right away
+                next_node = self.local_successor_node(key)
 
-                # look up and return local successor 
-                next_id: int = self.local_successor_node(request[1])
-                self.channel.send_to([sender], (constChord.LOOKUP_REP, next_id))
+                # check if this node is responsible:
+                # yes -> reply
+                # no -> recursively send request to the closest node in the finger table
+                if next_node == self.node_id:
+                    print(f"Found responsible node for {key}: node {self.node_id}")
+                    self.channel.send_to([str(origin)], (constChord.LOOKUP_REP, self.node_id))
+                else:
+                    print(f"Forwarding lookup from node {self.node_id} to {next_node}")
 
-                # Finally do a sanity check
-                if not self.channel.exists(next_id):  # probe for existence
-                    self.delete_node(next_id)  # purge disappeared node
+                    # calculate closest node
+                    closest = self.get_closest(key)
+                    if closest == self.node_id or closest == -1:
+                        closest = next_node
+
+                    self.channel.send_to([str(next_node)], (constChord.LOOKUP_REQ, key, origin))
 
             elif request[0] == constChord.JOIN:
                 # Join request (the node was already registered above)
