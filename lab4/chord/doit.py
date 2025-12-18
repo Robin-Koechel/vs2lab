@@ -70,7 +70,6 @@ def create_and_run(num_bits, node_class, enter_bar, run_bar):
     node.enter()  # do what is needed to enter the ring
     run_bar.wait()  # wait for all nodes to finish entering
     node.run()  # start operating the node
-    node.run()  # start operating the node
 
 
 if __name__ == "__main__":  # if script is started from command line
