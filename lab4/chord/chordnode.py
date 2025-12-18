@@ -182,10 +182,10 @@ class ChordNode:
                     self.channel.send_to([origin], (constChord.LOOKUP_REP, next_id))
                 else:
                     # forward lookup to the best known node (recursive lookup)
-                    best = self.closest_preceding_node(key)
-                    if best == self.node_id or best == -1:
+                    # best = self.local_successor_node(key)
+                    # if best == self.node_id or best == -1:
                         # fall back to direct successor if we couldn't find a closer node
-                        best = next_id
+                    best = next_id
                     # include the original origin so the final reply can be routed back
                     self.channel.send_to([str(best)], (constChord.LOOKUP_REQ, key, origin))
 
