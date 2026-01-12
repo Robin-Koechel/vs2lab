@@ -2,8 +2,7 @@ import logging
 import random
 import time
 
-from constMutex import ENTER, RELEASE, ALLOW, ACTIVE
-
+from constMutex import ENTER, RELEASE, ALLOW, ACTIVE, HEARTBEAT, BLOCKING
 
 class Process:
     """
@@ -47,6 +46,13 @@ class Process:
         self.peer_type = 'unassigned'  # A flag indicating behavior pattern
         self.logger = logging.getLogger("vs2lab.lab5.mutex.process.Process")
 
+        self.last_heard = {}  #  (proc_id, timestamp)
+        self.last_hb = 0 # last heartbeat time
+        self.heartbeat_tick = 1 # in seconds
+
+        self.alive_processes = {} # (proc_id, timestamp)
+        self.timeout = 3 # in seconds
+
     def __mapid(self, id='-1'):
         # format channel member address
         if id == '-1':
@@ -87,6 +93,9 @@ class Process:
         # Multicast release notification
         self.channel.send_to(self.other_processes, msg)
 
+        if self.process_id in self.alive_processes:
+            self.alive_processes.pop(self.process_id)
+
     def __allowed_to_enter(self):
         # See who has sent a message (the set will hold at most one element per sender)
         processes_with_later_message = set([req[1] for req in self.queue[1:]])
@@ -96,6 +105,64 @@ class Process:
             processes_with_later_message)
         return first_in_queue and all_have_answered
 
+    def __send_heartbeat(self):
+        current_time = time.time()
+        self.clock = self.clock + 1
+        msg = (self.clock, self.process_id, HEARTBEAT)
+        try:
+            self.channel.send_to(self.other_processes, msg)
+            self.last_hb = current_time
+            self.last_heard[self.process_id] = current_time
+        except Exception as e:
+            self.logger.debug("{} failed to send HEARTBEAT: {}"
+                              .format(self.__mapid(), str(e)))
+
+    def __detect_crashes(self):
+        current_time = time.time()
+        crashed_processes = set()  
+
+        # check for processes stuck in CS
+        for proc_id, timestamp in list(self.alive_processes.items()):
+            # skip self - do not monitor our own status here
+            if proc_id == self.process_id:
+                continue
+            if current_time - timestamp > self.timeout:
+                self.logger.warning("{} detected peer {} stuck in CS for {:.1f}s".format(
+                    self.__mapid(), self.__mapid(proc_id), current_time - timestamp))
+                if self.alive_processes(proc_id):
+                    self.alive_processes.pop(proc_id)
+                crashed_processes.add(proc_id)
+
+        # check for processes that have not sent heartbeat recently but are not marked as stuck in CS
+        for proc_id, timestamp in list(self.last_heard.items()):
+            time_since = current_time - timestamp
+            
+            if time_since > self.timeout:
+                if proc_id not in crashed_processes:
+                    crashed_processes.add(proc_id)
+
+        # remove crashed processes from all data structures
+        if crashed_processes:
+            for proc_id in crashed_processes:
+                if proc_id in self.all_processes:
+                    self.all_processes.remove(proc_id)
+                if proc_id in self.other_processes:
+                    try:
+                        if len(self.other_processes) > 0:
+                            self.other_processes.remove(proc_id)
+                    except ValueError:
+                        pass
+                
+                # clean up queue
+                self.queue = [r for r in self.queue if r[1] != proc_id]
+                
+                # clean up dicts
+                if proc_id in self.last_heard:
+                    del self.last_heard[proc_id]
+                if proc_id in self.alive_processes:
+                    del self.alive_processes[proc_id]
+
+                
     def __receive(self):
         # Pick up any message
         _receive = self.channel.receive_from(self.other_processes, 3)
@@ -109,18 +176,27 @@ class Process:
                 self.__mapid(),
                 "ENTER" if msg[2] == ENTER
                 else "ALLOW" if msg[2] == ALLOW
-                else "RELEASE", self.__mapid(msg[1])))
+                else "RELEASE" if msg[2] == RELEASE
+                else "HEARTBEAT" if msg[2] == HEARTBEAT
+                else "BLOCKING", self.__mapid(msg[1]))) # process is busy in CS
 
             if msg[2] == ENTER:
                 self.queue.append(msg)  # Append an ENTER request
                 # and unconditionally allow (don't want to access CS oneself)
                 self.__allow_to_enter(msg[1])
+            elif msg[2] == HEARTBEAT:
+                # update last timestamp from 
+                self.last_heard[msg[1]] = time.time()
             elif msg[2] == ALLOW:
                 self.queue.append(msg)  # Append an ALLOW
             elif msg[2] == RELEASE:
                 # assure release requester indeed has access (his ENTER is first in queue)
                 assert self.queue[0][1] == msg[1] and self.queue[0][2] == ENTER, 'State error: inconsistent remote RELEASE'
                 del (self.queue[0])  # Just remove first message
+                if msg[1] in self.alive_processes:
+                    self.alive_processes.pop(msg[1])
+            elif msg[2] == BLOCKING:
+                self.alive_processes[msg[1]] = time.time()
 
             self.__cleanup_queue()  # Finally sort and cleanup the queue
         else:
@@ -141,6 +217,11 @@ class Process:
         self.other_processes = list(self.channel.subgroup('proc'))
         self.other_processes.remove(self.process_id)
 
+        # initialize last_seen timestamps for all known peers
+        now = time.time()
+        for pid in self.all_processes:
+            self.last_heard[pid] = now
+
         self.peer_name = peer_name  # assign peer name
         self.peer_type = peer_type  # assign peer behavior
 
@@ -149,6 +230,12 @@ class Process:
 
     def run(self):
         while True:
+            # send heartbeat and detect crashes
+            current_time = time.time()
+            if current_time - self.last_hb >= self.heartbeat_tick:
+                self.__send_heartbeat()
+                self.__detect_crashes()
+
             # Enter the critical section if
             # 1) there are more than one process left and
             # 2) this peer has active behavior and
@@ -162,13 +249,22 @@ class Process:
                 self.__request_to_enter()
                 while not self.__allowed_to_enter():
                     self.__receive()
+                    # send heartbeat and detect crashes while waiting
+                    current_time = time.time()
+                    if current_time - self.last_hb >= self.heartbeat_tick:
+                        self.__send_heartbeat()
+                        self.__detect_crashes()
 
                 # Stay in CS for some time ...
                 sleep_time = random.randint(0, 2000)
                 self.logger.debug("{} enters CS for {} milliseconds."
                                   .format(self.__mapid(), sleep_time))
                 print(" CS <- {}".format(self.__mapid()))
-                time.sleep(sleep_time/1000)
+                self.clock = self.clock + 1  # Increment clock value
+                self.alive_processes[self.process_id] = time.time() # Track own working status
+                msg = (self.clock, self.process_id, BLOCKING)
+                self.channel.send_to(self.other_processes, msg)
+                time.sleep(sleep_time/1000) # simulate blocking work in CS
 
                 # ... then leave CS
                 print(" CS -> {}".format(self.__mapid()))
